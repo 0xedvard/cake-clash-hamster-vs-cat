@@ -1,0 +1,159 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cake Clash: Hamster vs Cat</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero-banner">
+        <p class="eyebrow">Private room co-op chaos for two</p>
+        <h1>Cake Clash: Hamster vs Cat</h1>
+        <p class="hero-copy">Draw, guess, charge up a cake, and make your sweetheart hilariously chubby.</p>
+      </header>
+
+      <main>
+        <section id="landingView" class="card landing-card">
+          <div class="landing-copy">
+            <h2>Start a private room</h2>
+            <p>One player hosts as the hamster, the second joins as the sleek black cat. The room locks at two players and starts automatically.</p>
+          </div>
+          <div class="landing-actions">
+            <button id="createRoomButton" class="primary-button">Create Room</button>
+            <label class="join-room-field">
+              <span>Have a room code?</span>
+              <div class="join-row">
+                <input id="joinRoomInput" type="text" maxlength="5" placeholder="7XK92" />
+                <button id="joinRoomButton" class="secondary-button">Join</button>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <section id="gameView" class="hidden">
+          <div class="topbar-row">
+            <div class="card room-card">
+              <p class="tiny-label">Room</p>
+              <div class="room-link-row">
+                <strong id="roomCodeLabel">-----</strong>
+                <button id="copyLinkButton" class="ghost-button">Copy Invite Link</button>
+              </div>
+              <p id="noticeText" class="notice-text">Waiting for the first move...</p>
+            </div>
+            <div class="card phase-card">
+              <p class="tiny-label">Round</p>
+              <div class="phase-row">
+                <strong id="roundLabel">Round 1</strong>
+                <span id="phaseBadge" class="phase-badge">Lobby</span>
+                <span id="timerLabel" class="timer-pill">60s</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="scoreboard-grid">
+            <article class="card player-card hamster-card">
+              <p class="tiny-label">Hamster</p>
+              <h2>Edvard</h2>
+              <p id="hamsterRole" class="role-line">Waiting...</p>
+              <div class="meter-row">
+                <span class="meter-label">Cake hits</span>
+                <strong id="hamsterHits">0 / 10</strong>
+              </div>
+              <p id="hamsterStage" class="stage-line">Slim</p>
+            </article>
+
+            <article class="card battlefield-card">
+              <div class="battlefield-head">
+                <div>
+                  <p class="tiny-label">Cake Throw Phase</p>
+                  <h3>Battlefield</h3>
+                </div>
+                <div class="charge-card">
+                  <span id="battleHint">Waiting for a correct guess...</span>
+                  <div class="charge-meter">
+                    <div id="chargeFill" class="charge-fill"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="battlefield-stage">
+                <canvas id="battleCanvas" width="760" height="280"></canvas>
+                <div id="hamsterSprite" class="sprite-slot left-slot"></div>
+                <div id="catSprite" class="sprite-slot right-slot"></div>
+                <div id="impactText" class="impact-text hidden">SPLAT!</div>
+              </div>
+              <button id="chargeButton" class="primary-button battle-button" type="button">Hold to Charge Cake</button>
+            </article>
+
+            <article class="card player-card cat-card">
+              <p class="tiny-label">Slim black cat</p>
+              <h2>Elina</h2>
+              <p id="catRole" class="role-line">Waiting...</p>
+              <div class="meter-row">
+                <span class="meter-label">Cake hits</span>
+                <strong id="catHits">0 / 10</strong>
+              </div>
+              <p id="catStage" class="stage-line">Slim</p>
+            </article>
+          </div>
+
+          <div class="bottom-grid">
+            <section class="card drawing-card">
+              <div class="drawing-header">
+                <div>
+                  <p class="tiny-label">Drawing Round</p>
+                  <h3>Sketch Board</h3>
+                </div>
+                <div id="wordPanel" class="word-panel">Waiting for the round to begin...</div>
+              </div>
+              <div class="toolbar-shell">
+                <div class="tool-group" id="toolButtons">
+                  <button class="tool-button active" data-tool="pencil">Pencil</button>
+                  <button class="tool-button" data-tool="marker">Marker</button>
+                  <button class="tool-button" data-tool="brush">Brush</button>
+                  <button class="tool-button" data-tool="eraser">Eraser</button>
+                </div>
+                <div class="tool-group color-group" id="colorButtons"></div>
+                <div class="tool-group" id="sizeButtons">
+                  <button class="tool-button active" data-size="small">S</button>
+                  <button class="tool-button" data-size="medium">M</button>
+                  <button class="tool-button" data-size="large">L</button>
+                  <button class="tool-button" data-size="xlarge">XL</button>
+                </div>
+                <div class="tool-group action-group">
+                  <button id="undoButton" class="tool-button">Undo</button>
+                  <button id="redoButton" class="tool-button">Redo</button>
+                  <button id="clearButton" class="tool-button warn">Clear</button>
+                </div>
+              </div>
+              <canvas id="drawingCanvas" width="940" height="460"></canvas>
+            </section>
+
+            <aside class="card side-panel">
+              <div>
+                <p class="tiny-label">Guessing</p>
+                <h3>Answer Box</h3>
+                <p class="helper-text">English and Russian guesses are both accepted.</p>
+              </div>
+              <form id="guessForm" class="guess-form">
+                <input id="guessInput" type="text" autocomplete="off" placeholder="Type your guess..." />
+                <button class="primary-button" type="submit">Guess</button>
+              </form>
+              <div class="guess-log-shell">
+                <div class="log-title-row">
+                  <strong>Recent guesses</strong>
+                </div>
+                <ul id="guessLog" class="guess-log"></ul>
+              </div>
+              <button id="playAgainButton" class="secondary-button hidden" type="button">Play Again</button>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="/game.js"></script>
+  </body>
+</html>
