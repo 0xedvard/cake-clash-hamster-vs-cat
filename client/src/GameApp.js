@@ -130,6 +130,43 @@ function normalizeRoomMapId(mapId) {
   return "map1";
 }
 
+function isSoloModeEnabled() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return new URLSearchParams(window.location.search).get("solo") === "1";
+}
+
+function resolveLowPerformanceMode() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const explicitMode = searchParams.get("lowperf");
+
+  if (explicitMode === "1") {
+    return true;
+  }
+
+  if (explicitMode === "0") {
+    return false;
+  }
+
+  const deviceMemory = Number.isFinite(window.navigator?.deviceMemory)
+    ? window.navigator.deviceMemory
+    : null;
+  const hardwareConcurrency = Number.isFinite(window.navigator?.hardwareConcurrency)
+    ? window.navigator.hardwareConcurrency
+    : null;
+
+  return Boolean(
+    (deviceMemory !== null && deviceMemory <= 4) ||
+    (hardwareConcurrency !== null && hardwareConcurrency <= 4)
+  );
+}
+
 function resolveServerUrl() {
   const configuredUrl = import.meta.env.VITE_SERVER_URL?.trim();
 
@@ -240,6 +277,8 @@ function createNightSkyGradientTexture() {
 export class GameApp {
   constructor(container) {
     this.container = container;
+    this.lowPerformanceMode = resolveLowPerformanceMode();
+    this.maxRendererPixelRatio = this.lowPerformanceMode ? 1 : 1.5;
     this.scene = new THREE.Scene();
     if (ENABLE_GRADIENT_BACKGROUND) {
       console.log("gradient enabled");
@@ -262,8 +301,11 @@ export class GameApp {
     this.dangerSound = new THREE.Audio(this.audioListener);
     this.audioLoader = new THREE.AudioLoader();
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: !this.lowPerformanceMode,
+      powerPreference: "high-performance"
+    });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.maxRendererPixelRatio));
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -351,12 +393,14 @@ export class GameApp {
     this.resultScreenOverlay = this.createResultScreenOverlay();
     this.creditsOverlay = this.createCreditsOverlay();
     this.vigilPresenceOverlay = this.createVigilPresenceOverlay();
+    this.soloModeBadge = this.createSoloModeBadge();
     this.rescueImmunityActive = false;
     this.statusBannerHideHandle = null;
     this.portalReadyAnnounced = false;
     this.gameStarted = false;
     this.shellState = GAME_SHELL_STATES.title;
     this.initializePromise = null;
+    this.isSoloMode = isSoloModeEnabled();
     this.portalArea = {
       position: new THREE.Vector3(PORTAL_POINT.x, PORTAL_POINT.y, PORTAL_POINT.z),
       radius: PORTAL_COMPLETE_RADIUS
@@ -365,6 +409,12 @@ export class GameApp {
     this.tempVectorA = new THREE.Vector3();
     this.tempVectorB = new THREE.Vector3();
     this.cachedLitShrineCount = -1;
+    this.currentInteractionPromptText = "";
+    this.currentGuidanceBannerText = "";
+    this.currentGuidanceBannerBorder = "";
+    this.currentGuidanceBannerBackground = "";
+    this.currentGuidanceBannerVisible = false;
+    this.currentVigilOverlayOpacity = "";
 
     this.networkClient = new NetworkClient({ serverUrl: SERVER_URL });
     this.roomOverlay = new RoomOverlay(document.body);
@@ -410,6 +460,12 @@ export class GameApp {
     this.initializePromise = (async () => {
       try {
         this.sharedAnimations = await this.loadSharedAnimations();
+
+        if (this.isSoloMode) {
+          await this.initializeSoloRun();
+          return;
+        }
+
         this.setupNetworkHandlers();
         await this.initializeRoomFlow();
       } catch (error) {
@@ -419,6 +475,26 @@ export class GameApp {
     })();
 
     return this.initializePromise;
+  }
+
+  async initializeSoloRun() {
+    this.roomOverlay.hide();
+    this.localSocketId = "solo_local";
+    this.localCharacterId = "edvard";
+    this.roomCode = null;
+    this.lastSentPlayerState = "";
+
+    await this.spawnLocalPlayer({
+      socketId: this.localSocketId,
+      characterId: this.localCharacterId,
+      position: { x: -0.8, y: 0, z: 0.2 },
+      rotationY: 0,
+      animation: "idle",
+      isJumping: false
+    });
+
+    this.applyShrineState(createDefaultShrineState(), { silent: true });
+    this.showStatusBanner("Offline performance test");
   }
 
   async initializeRoomFlow() {
@@ -1022,13 +1098,17 @@ export class GameApp {
     const directionalLight = new THREE.DirectionalLight(0x97b3d1, 1.05);
     directionalLight.position.set(-48, 60, 32);
     directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.set(2048, 2048);
+    directionalLight.shadow.mapSize.set(
+      this.lowPerformanceMode ? 1024 : 2048,
+      this.lowPerformanceMode ? 1024 : 2048
+    );
     directionalLight.shadow.camera.near = 1;
     directionalLight.shadow.camera.far = 180;
     directionalLight.shadow.camera.left = -90;
     directionalLight.shadow.camera.right = 90;
     directionalLight.shadow.camera.top = 90;
     directionalLight.shadow.camera.bottom = -90;
+    directionalLight.shadow.normalBias = this.lowPerformanceMode ? 0.045 : 0.025;
     this.scene.add(directionalLight);
 
     const fillLight = new THREE.HemisphereLight(0x86a2bf, 0x263241, 1.35);
@@ -1037,7 +1117,9 @@ export class GameApp {
 
   loadMapOne() {
     this.currentMapId = "map1";
-    const world = createBelarusVillageWorld();
+    const world = createBelarusVillageWorld({
+      lowPerformanceMode: this.lowPerformanceMode
+    });
     this.mountWorld(world, { applyShrineState: true });
   }
 
@@ -1630,6 +1712,7 @@ export class GameApp {
 
     this.camera.aspect = clientWidth / clientHeight;
     this.camera.updateProjectionMatrix();
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.maxRendererPixelRatio));
     this.renderer.setSize(clientWidth, clientHeight);
     this.camera.lookAt(this.followCameraTarget);
   }
@@ -2330,7 +2413,9 @@ export class GameApp {
     }
 
     this.gameStarted = true;
-    this.startNetworkTick();
+    if (!this.isSoloMode) {
+      this.startNetworkTick();
+    }
     this.setShellState(GAME_SHELL_STATES.ingame);
     this.initialize();
   }
@@ -3572,8 +3657,14 @@ export class GameApp {
       return;
     }
 
-    this.interactionPrompt.textContent = text;
-    this.interactionPrompt.style.display = "block";
+    if (this.currentInteractionPromptText !== text) {
+      this.interactionPrompt.textContent = text;
+      this.currentInteractionPromptText = text;
+    }
+
+    if (this.interactionPrompt.style.display !== "block") {
+      this.interactionPrompt.style.display = "block";
+    }
   }
 
   hideInteractionPrompt() {
@@ -3581,7 +3672,10 @@ export class GameApp {
       return;
     }
 
-    this.interactionPrompt.style.display = "none";
+    this.currentInteractionPromptText = "";
+    if (this.interactionPrompt.style.display !== "none") {
+      this.interactionPrompt.style.display = "none";
+    }
   }
 
   showStatusBanner(text, durationMs = 3600) {
@@ -3643,6 +3737,7 @@ export class GameApp {
     this.shrineProgressHud.style.display = hudVisible ? "block" : "none";
     this.guidanceBanner.style.display = gameplayVisible ? this.guidanceBanner.style.display : "none";
     this.vigilPresenceOverlay.style.display = hudVisible ? "block" : "none";
+    this.soloModeBadge.style.display = this.isSoloMode && hudVisible ? "block" : "none";
 
     if (this.shellState === GAME_SHELL_STATES.title) {
       this.roomOverlay.hide();
@@ -3696,7 +3791,11 @@ export class GameApp {
     }
 
     if (this.shellState !== GAME_SHELL_STATES.ingame) {
-      this.guidanceBanner.style.display = "none";
+      if (this.currentGuidanceBannerVisible) {
+        this.guidanceBanner.style.display = "none";
+        this.currentGuidanceBannerVisible = false;
+        this.currentGuidanceBannerText = "";
+      }
       return;
     }
 
@@ -3728,14 +3827,34 @@ export class GameApp {
     }
 
     if (!text) {
-      this.guidanceBanner.style.display = "none";
+      if (this.currentGuidanceBannerVisible) {
+        this.guidanceBanner.style.display = "none";
+        this.currentGuidanceBannerVisible = false;
+        this.currentGuidanceBannerText = "";
+      }
       return;
     }
 
-    this.guidanceBanner.textContent = text;
-    this.guidanceBanner.style.border = "1px solid " + borderColor;
-    this.guidanceBanner.style.background = background;
-    this.guidanceBanner.style.display = "block";
+    if (this.currentGuidanceBannerText !== text) {
+      this.guidanceBanner.textContent = text;
+      this.currentGuidanceBannerText = text;
+    }
+
+    const nextBorder = "1px solid " + borderColor;
+    if (this.currentGuidanceBannerBorder !== nextBorder) {
+      this.guidanceBanner.style.border = nextBorder;
+      this.currentGuidanceBannerBorder = nextBorder;
+    }
+
+    if (this.currentGuidanceBannerBackground !== background) {
+      this.guidanceBanner.style.background = background;
+      this.currentGuidanceBannerBackground = background;
+    }
+
+    if (!this.currentGuidanceBannerVisible) {
+      this.guidanceBanner.style.display = "block";
+      this.currentGuidanceBannerVisible = true;
+    }
   }
 
   updateInteractionPrompt() {
@@ -3818,6 +3937,27 @@ export class GameApp {
     return overlay;
   }
 
+  createSoloModeBadge() {
+    const badge = document.createElement("div");
+    badge.style.position = "fixed";
+    badge.style.top = "18px";
+    badge.style.left = "18px";
+    badge.style.padding = "8px 12px";
+    badge.style.borderRadius = "999px";
+    badge.style.background = "rgba(12, 20, 28, 0.72)";
+    badge.style.border = "1px solid rgba(210, 234, 255, 0.2)";
+    badge.style.color = "#f6f1d1";
+    badge.style.fontFamily = "Georgia, serif";
+    badge.style.fontSize = "13px";
+    badge.style.letterSpacing = "0.03em";
+    badge.style.pointerEvents = "none";
+    badge.style.zIndex = "39";
+    badge.style.display = "none";
+    badge.textContent = "Offline performance test";
+    document.body.appendChild(badge);
+    return badge;
+  }
+
   renderClueJournal() {
     if (!this.clueJournal) {
       return;
@@ -3891,9 +4031,11 @@ export class GameApp {
     glow.position.y = 0.02;
     marker.add(glow);
 
-    const light = new THREE.PointLight(0xb7e8ff, 0.9, 14, 2);
-    light.position.y = 1.6;
-    marker.add(light);
+    if (!this.lowPerformanceMode) {
+      const light = new THREE.PointLight(0xb7e8ff, 0.9, 14, 2);
+      light.position.y = 1.6;
+      marker.add(light);
+    }
 
     return marker;
   }
@@ -3915,7 +4057,12 @@ export class GameApp {
           : 0;
     const currentOpacity = Number.parseFloat(this.vigilPresenceOverlay.style.opacity || "0");
     const nextOpacity = THREE.MathUtils.lerp(currentOpacity, Math.max(0, targetOpacity), Math.min(1, delta * 3.2));
-    this.vigilPresenceOverlay.style.opacity = nextOpacity.toFixed(3);
+    const nextOpacityText = nextOpacity.toFixed(3);
+
+    if (this.currentVigilOverlayOpacity !== nextOpacityText) {
+      this.vigilPresenceOverlay.style.opacity = nextOpacityText;
+      this.currentVigilOverlayOpacity = nextOpacityText;
+    }
   }
 
   getCharacterDisplayName(characterId) {
@@ -3969,8 +4116,10 @@ export class GameApp {
     );
     effect.add(glow);
 
-    const light = new THREE.PointLight(0x9ddcff, 1.4, 8, 2);
-    effect.add(light);
+    if (!this.lowPerformanceMode) {
+      const light = new THREE.PointLight(0x9ddcff, 1.4, 8, 2);
+      effect.add(light);
+    }
 
     return effect;
   }
@@ -4123,8 +4272,10 @@ export class GameApp {
     );
     orb.add(mesh);
 
-    const glow = new THREE.PointLight(0x9fd8ff, 0.65, 5.5, 2);
-    orb.add(glow);
+    if (!this.lowPerformanceMode) {
+      const glow = new THREE.PointLight(0x9fd8ff, 0.65, 5.5, 2);
+      orb.add(glow);
+    }
 
     return orb;
   }
@@ -4260,8 +4411,10 @@ export class GameApp {
     );
     orb.add(innerMesh);
 
-    const glow = new THREE.PointLight(0xff4a46, 0.9, 6.2, 2);
-    orb.add(glow);
+    if (!this.lowPerformanceMode) {
+      const glow = new THREE.PointLight(0xff4a46, 0.9, 6.2, 2);
+      orb.add(glow);
+    }
 
     return orb;
   }

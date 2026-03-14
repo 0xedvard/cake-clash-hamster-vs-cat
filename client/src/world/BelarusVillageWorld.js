@@ -104,6 +104,9 @@ const SHRINE_DEFINITIONS = [
 ];
 const ENABLE_STARS = false;
 const ENABLE_AURORA = false;
+const DEFAULT_WORLD_RENDER_OPTIONS = Object.freeze({
+  lowPerformanceMode: false
+});
 
 let cachedRoadPath = null;
 let cachedRoadTexture = null;
@@ -118,6 +121,11 @@ let kenneyTreeLoadLogged = false;
 let kenneyBushLoadLogged = false;
 let kenneyRockLoadLogged = false;
 let kenneyPropLoadLogged = false;
+let activeWorldRenderOptions = DEFAULT_WORLD_RENDER_OPTIONS;
+
+function isLowPerformanceMode() {
+  return Boolean(activeWorldRenderOptions.lowPerformanceMode);
+}
 let kenneyTreeFallbackLogged = false;
 let kenneyBushFallbackLogged = false;
 let kenneyRockFallbackLogged = false;
@@ -205,7 +213,13 @@ export function getGroundHeightAt() {
   return BELARUS_GROUND_Y;
 }
 
-export function createBelarusVillageWorld() {
+export function createBelarusVillageWorld(options = {}) {
+  activeWorldRenderOptions = {
+    ...DEFAULT_WORLD_RENDER_OPTIONS,
+    ...options,
+    lowPerformanceMode: Boolean(options.lowPerformanceMode)
+  };
+
   const world = new THREE.Group();
   world.name = "belarus_village_world";
 
@@ -249,38 +263,51 @@ export function createBelarusVillageWorld() {
   world.add(lakeSystem);
   world.add(createLakeShoreDetails());
   world.add(createLakeBacklands());
-  const mistSystem = createForestMistSystem();
-  world.add(mistSystem.group);
+  const mistSystem = isLowPerformanceMode() ? null : createForestMistSystem();
+  if (mistSystem) {
+    world.add(mistSystem.group);
+  }
   const portalSystem = createLakePortalEffect();
   world.add(portalSystem.group);
-  const vigilPresenceSystem = createVigilPresenceSystem();
-  world.add(vigilPresenceSystem.group);
+  const vigilPresenceSystem = isLowPerformanceMode() ? null : createVigilPresenceSystem();
+  if (vigilPresenceSystem) {
+    world.add(vigilPresenceSystem.group);
+  }
 
   attachKenneyTrees(world);
   attachKenneyBushes(world);
   attachKenneyRocks(world);
   attachKenneyProps(world);
 
-  const fireflySystem = createFireflies();
-  world.add(fireflySystem.group);
+  const fireflySystem = isLowPerformanceMode() ? null : createFireflies();
+  if (fireflySystem) {
+    world.add(fireflySystem.group);
+  }
   const treeSwaySystem = createTreeSwaySystem(world);
+  let lastDecorativeUpdateTime = Number.NEGATIVE_INFINITY;
   world.userData.update = (time, context = {}) => {
     if (auroraSystem) {
       auroraSystem.update(time);
     }
     shrineSystem.update?.(time);
     lakeSystem.userData.update?.(time);
-    fireflySystem.update(time);
-    mistSystem.update(time);
+    if (isLowPerformanceMode() && time - lastDecorativeUpdateTime < 0.08) {
+      return;
+    }
+
+    lastDecorativeUpdateTime = time;
+    fireflySystem?.update(time);
+    mistSystem?.update(time);
     portalSystem.update(time);
     treeSwaySystem.update(time);
-    vigilPresenceSystem.update(time, context);
+    vigilPresenceSystem?.update(time, context);
   };
   world.userData.getGroundHeightAt = getGroundHeightAt;
   world.userData.isInsideSafeCorridor = (x, z) => isInsideRoadSafeCorridor(x, z);
   world.userData.churchHealing = churchSystem.healing;
   world.userData.shrines = shrineSystem;
   world.userData.vigilPresence = vigilPresenceSystem;
+  world.userData.lowPerformanceMode = isLowPerformanceMode();
   world.userData.portal = {
     position: { ...PORTAL_POINT },
     radius: 3.2
@@ -1633,7 +1660,12 @@ function createShrineSystem() {
     shrineGlow.material.opacity = 0.36;
     shrineGroup.add(shrineGlow);
 
-    const shrineLight = new THREE.PointLight(COLORS.shrineLit, 0.12, 5.6, 2);
+    const shrineLight = new THREE.PointLight(
+      COLORS.shrineLit,
+      isLowPerformanceMode() ? 0.08 : 0.12,
+      isLowPerformanceMode() ? 4.4 : 5.6,
+      2
+    );
     shrineLight.position.set(0, 0.96, 0);
     shrineGroup.add(shrineLight);
 
@@ -1681,7 +1713,9 @@ function createShrineSystem() {
       shrineGlow.material.color.setHex(lit ? COLORS.shrineLit : COLORS.shrineDormant);
       shrineLight.color.setHex(lit ? COLORS.shrinePulse : COLORS.shrineDormant);
       shrineGlow.scale.setScalar(lit ? 1.04 : 0.82);
-      shrineLight.intensity = lit ? 0.52 : 0.08;
+      shrineLight.intensity = lit
+        ? (isLowPerformanceMode() ? 0.34 : 0.52)
+        : (isLowPerformanceMode() ? 0.04 : 0.08);
     });
   }
 
@@ -1726,7 +1760,10 @@ function createShrineSystem() {
         }
 
         const wave = lit ? Math.sin(time * 2.2 + pulsePhase) * 0.06 : 0;
-        shrineLight.intensity = (lit ? 0.52 + wave : 0.08) + pulseTime * 0.34;
+        const baseIntensity = lit
+          ? (isLowPerformanceMode() ? 0.34 : 0.52)
+          : (isLowPerformanceMode() ? 0.04 : 0.08);
+        shrineLight.intensity = baseIntensity + wave + pulseTime * (isLowPerformanceMode() ? 0.22 : 0.34);
         shrineGlow.scale.setScalar((lit ? 1.04 + wave : 0.82) + pulseTime * 0.08);
         shrineGlow.material.opacity = (lit ? 0.78 : 0.22) + pulseTime * 0.12;
       });
@@ -3243,12 +3280,18 @@ function createLakePortalEffect() {
   groundGlow.position.y = 0.03;
   group.add(groundGlow);
 
-  const light = new THREE.PointLight(COLORS.portal, 0.65, 14, 2);
+  const light = new THREE.PointLight(
+    COLORS.portal,
+    isLowPerformanceMode() ? 0.38 : 0.65,
+    isLowPerformanceMode() ? 9 : 14,
+    2
+  );
   light.position.set(0, 1.1, 0);
   group.add(light);
 
   const particles = [];
-  for (let index = 0; index < 10; index += 1) {
+  const particleCount = isLowPerformanceMode() ? 4 : 10;
+  for (let index = 0; index < particleCount; index += 1) {
     const particle = createGlowOrb({
       position: [0, 0.48 + index * 0.04, 0],
       radius: 0.05 + (index % 3) * 0.01,
@@ -4245,9 +4288,11 @@ function createLampPost(x, z) {
   group.add(createMesh(new THREE.BoxGeometry(0.16, 3.8, 0.16), createSurfaceMaterial(0x313840), { position: new THREE.Vector3(0, 1.9, 0), castShadow: true, receiveShadow: true }));
   group.add(createMesh(new THREE.BoxGeometry(0.7, 0.12, 0.12), createSurfaceMaterial(0x313840), { position: new THREE.Vector3(0.26, 3.55, 0), castShadow: true, receiveShadow: true }));
   group.add(createGlowOrb({ position: [0.56, 3.35, 0], radius: 0.18, color: COLORS.lampGlow }));
-  const light = new THREE.PointLight(COLORS.lampGlow, 0.88, 12, 2);
-  light.position.set(0.56, 3.35, 0);
-  group.add(light);
+  if (!isLowPerformanceMode()) {
+    const light = new THREE.PointLight(COLORS.lampGlow, 0.88, 12, 2);
+    light.position.set(0.56, 3.35, 0);
+    group.add(light);
+  }
   return group;
 }
 
@@ -4514,9 +4559,11 @@ function createHayBale(x, z, scale = [1.6, 1.3, 1.1]) {
 function createPointLightOrb(position, color, intensity, distance) {
   const group = new THREE.Group();
   group.add(createGlowOrb({ position, radius: 0.32, color }));
-  const light = new THREE.PointLight(color, intensity, distance, 2);
-  light.position.set(position[0], position[1], position[2]);
-  group.add(light);
+  if (!isLowPerformanceMode()) {
+    const light = new THREE.PointLight(color, intensity, distance, 2);
+    light.position.set(position[0], position[1], position[2]);
+    group.add(light);
+  }
   return group;
 }
 
@@ -4987,10 +5034,6 @@ function createMesh(geometry, material, options = {}) {
   }
   return mesh;
 }
-
-
-
-
 
 
 
